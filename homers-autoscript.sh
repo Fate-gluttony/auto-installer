@@ -40,6 +40,7 @@ DATE=$(date +%d-%b-%Y)
 MAILX_ARG=
 NOGROUP="nogroup"
 OVPN_COUNT=5
+OVPN_PORT="1194"
 
 get_email() {
     read -rp "Enter email: " MYEMAIL
@@ -75,8 +76,8 @@ append_dns() {
 }
 
 get_ip() {
-    EXTERNAL_INT="$(cut -d' ' -f5 <(ip -4 route ls default))"
-    EXTERNAL_IP="$(ip -4 addr ls $EXTERNAL_INT | head -2 | tail -1 | cut -d' ' -f6 | cut -d'/' -f1)"
+    export EXTERNAL_INT="$(cut -d' ' -f5 <(ip -4 route ls default))"
+    export EXTERNAL_IP="$(ip -4 addr ls $EXTERNAL_INT | head -2 | tail -1 | cut -d' ' -f6 | cut -d'/' -f1)"
 }
 
 setup_firewall() {
@@ -95,6 +96,7 @@ EOF
     firewall-cmd --quiet --permanent --zone=${ZONE} --add-service=privoxy
     firewall-cmd --quiet --permanent --zone=${ZONE} --add-service=openvpn
     firewall-cmd --quiet --permanent --zone=${ZONE} --add-service=http
+    firewall-cmd --quiet --permanent --zone=${ZONE} --add-service=jenkins
     firewall-cmd --quiet --permanent --zone=${ZONE} --add-port=1194/tcp
     firewall-cmd --quiet --permanent --zone=${ZONE} --add-masquerade
     sleep 2
@@ -156,13 +158,8 @@ setup_squid() {
     [[ -f $SQUID_CONFIG ]] && { echo "Renaming the old config to ${SQUID_CONFIG}.${DATE}-${HOUR}"; mv ${SQUID_CONFIG}{,.${DATE}-${HOUR}}; }
 cat << EOF > ${SQUID_CONFIG}
 visible_hostname squid.proxy
-acl localnet src 192.168.0.0/16         # RFC 1918 local private network (LAN)
-acl localnet src fc00::/7               # RFC 4193 local private network range
-acl localnet src fe80::/10              # RFC 4291 link-local (directly plugged) machines
-acl SSL_ports port 443
-acl Safe_ports port 80          # http
-acl Safe_ports port 21          # ftp
-acl Safe_ports port 443         # https
+acl SSL_ports port 1194         # openVPN
+acl Safe_ports port 1194        # openVPN
 acl CONNECT method CONNECT
 via off
 forwarded_for delete
@@ -186,14 +183,10 @@ request_header_access Referer deny all
 request_header_access All deny all
 http_access deny !Safe_ports
 http_access deny CONNECT !SSL_ports
-http_access allow localhost manager
-http_access deny manager
-http_access allow localnet
 http_access allow localhost
 http_access deny all
 http_port 127.0.0.1:3127
-http_port ${EXTERNAL_IP}:3128
-#cache_peer 127.0.0.1 parent 8118 7 no-query no-digest default
+http_port ${EXTERNAL_IP}:8080
 cache deny all
 shutdown_lifetime 5 seconds
 EOF
@@ -247,7 +240,7 @@ EOF
     rm -rf ${OPENVPN_DIR}/easy-rsa-master 2> /dev/null
 
 cat << EOF > ${OPENVPN_DIR}/server.conf
-local ${EXTERNAL_IP}
+local 127.0.0.1
 port 1194
 proto tcp-server
 dev tun
@@ -256,7 +249,7 @@ ca ca.crt
 cert server.crt
 key server.key  # This file should be kept secret
 dh dh.pem
-auth sha256
+auth sha1
 server 10.66.66.0 255.255.255.0
 script-security 2
 ifconfig-pool-persist /var/log/openvpn/ipp.txt
@@ -264,10 +257,10 @@ push "redirect-gateway def1"
 push "dhcp-option DNS 208.67.222.222"
 push "dhcp-option DNS 208.67.220.220"
 keepalive 10 120
-cipher AES-256-CBC
+cipher AES-128-CBC
 compress lz4-v2
 push "compress lz4-v2"
-max-clients 10
+max-clients ${OVPN_COUNT}
 user nobody
 group ${NOGROUP}
 persist-key
@@ -284,33 +277,37 @@ push "rcvbuf 393216"
 link-mtu 1440
 EOF
 
+VIA_PORT=( 8118 8080 )
+TEMPLATE="${CLIENT_OVPN}/template.txt"
 CLIENT_OVPN="${OPENVPN_DIR}/client-ovpn.d"
 [[ ! -d ${CLIENT_OVPN} ]] && mkdir ${CLIENT_OVPN}
-cat << EOF > ${CLIENT_OVPN}/template.txt
+cat << EOF > ${TEMPLATE}
 client
 dev tun
 proto tcp-client
-remote ${EXTERNAL_IP} 1194
+remote 127.0.0.1 1194
 pull
 comp-lzo # UDP only
-auth-nocache
-auth sha256
+auth sha1
 remote-cert-tls server
 verb 2
 mute 2
 redirect-gateway def1
 script-security 2
-cipher AES-256-CBC
+cipher AES-128-CBC
 dhcp-option DNS 208.67.222.222
 dhcp-option DNS 1.1.1.1
 dhcp-option DNS 1.0.0.1
+http-proxy ${EXTERNAL_IP} 8080
+http-proxy-option VERSION 1.1
+http-proxy-option CUSTOM-HEADER "CONNECT HTTP/1.1"
 link-mtu 1440
 EOF
     sleep 2
     for i in $(seq -ws' ' 1 ${OVPN_COUNT}); do
         CURRENT="${CLIENT_OVPN}/client${i}.ovpn"
         ${EASYRSA_DIR}/easyrsa --batch build-client-full client${i} nopass
-        cat ${CLIENT_OVPN}/template.txt > ${CURRENT}
+        cat ${TEMPLATE} > ${CURRENT}
         echo >> ${CURRENT}
         echo "<ca>" >> ${CURRENT}
         sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' ${OPENVPN_DIR}/ca.crt >> ${CURRENT}
@@ -331,7 +328,7 @@ EOF
 mail_report() {
   MAILER=$(which mailx)
   firewall-cmd --zone=public --list-all | tee -a ${REPORT}
-  echo "Setup report + OVPN configs. Enjoy\!" | ${MAILER} -s "[${EXTERNAL_IP}] Report of openVPN, privoxy and squid installation on ${OS}-${OS_VERSION_ID} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} /etc/openvpn/client-ovpn.d/myovpns.zip -- ${MYEMAIL}
+  echo 'Setup report + OVPN configs. Enjoy!' | ${MAILER} -s "[${EXTERNAL_IP}] Report of openVPN, privoxy and squid installation on ${OS}-${OS_VERSION_ID} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} /etc/openvpn/client-ovpn.d/myovpns.zip -- ${MYEMAIL}
 }
 
 post_install_check() {
@@ -343,7 +340,7 @@ $(echo -e "+----------------------------------------+\n")
 $(echo -e "|---- PERFORMING POST-INSTALL CHECKS ----|\n")
 $(echo -e "+========================================+\n")
 $(echo -e "\n  Checking for listening ports...")
-$(ss -4tlnp "( sport = :22 or sport = :1194 or sport = :8118 or sport = :3128 )")
+$(ss -4tlnp "( sport = :22 or sport = :1194 or sport = :8118 or sport = :3128 or sport = :8080 )")
 $(echo -e "\nChecking allowed services through the firewall:") $(firewall-cmd --zone=${ZOME} --list-services)
 $(echo)
 EOF
