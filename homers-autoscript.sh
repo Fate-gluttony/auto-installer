@@ -183,8 +183,7 @@ request_header_access Referer deny all
 request_header_access All deny all
 http_access deny !Safe_ports
 http_access deny CONNECT !SSL_ports
-http_access allow localhost
-http_access deny all
+http_access allow all
 http_port 127.0.0.1:3127
 http_port ${EXTERNAL_IP}:8080
 cache deny all
