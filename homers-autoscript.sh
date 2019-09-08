@@ -365,6 +365,7 @@ EOF
 
 main_func() {
     menu
+    [[ $(pgrep apt) ]] && { echo "A background apt process is running. Please re-try in 2-5 minutes"; exit 1; }
     get_email
     case "${TARGET_OS}" in
         Debian*)
