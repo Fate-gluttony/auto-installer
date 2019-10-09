@@ -343,7 +343,7 @@ mail_report() {
   MAILER=$(which mailx)
   firewall-cmd --zone=public --list-all | tee -a ${REPORT}
   cd ${CLIENT_OVPN}
-  echo "Setup report + OVPN configs. Have fun!" | ${MAILER} -s "[${TARGET_OS}] Report on openVPN, privoxy and squid installation on ${EXTERNAL_IP} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} myovpns.zip -- ${MYEMAIL}
+  echo "Setup report + OVPN configs. Have fun!" | ${MAILER} -s "[${TARGET_OS}] Report on openVPN, privoxy and squid installation in ${EXTERNAL_IP} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} myovpns.zip -- ${MYEMAIL}
 }
 
 post_install_check() {
