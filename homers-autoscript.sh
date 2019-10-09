@@ -48,10 +48,10 @@ get_email() {
         echo "Can't have an empty email address"
         read -rp "Enter email: " MYEMAIL
     done
-    read -rp "Confirm (y/n): " CONFIRM
+    read -rp "Confirm [y]/n: " CONFIRM
     while ([[ x$CONFIRM != 'xY' ]] && [[ x$CONFIRM != 'xy' ]]); do
-    [[ x$CONFIRM == 'xN' ]] || [[ x$CONFIRM == 'xn' ]] && { $(get_email); break; }
-    read -rp "Incorrect reply. Confirm (y/n): " CONFIRM
+        [[ x$CONFIRM == 'xN' ]] || [[ x$CONFIRM == 'xn' ]] && { $(get_email); break; }
+        read -rp "Incorrect reply. Confirm (y/n): " CONFIRM
     done
 }
 
@@ -64,6 +64,7 @@ cat <<EOF
 +-----------------------------------------------------------------+
 You will be notified via email once the installation is complete.
 EOF
+echo
 }
 
 append_dns() {
@@ -239,7 +240,7 @@ EOF
     rm -rf ${OPENVPN_DIR}/easy-rsa-master 2> /dev/null
 
 cat << EOF > ${OPENVPN_DIR}/server.conf
-local 127.0.0.1
+local ${EXTERNAL_IP}
 port 1194
 proto tcp-server
 dev tun
@@ -321,13 +322,14 @@ EOF
         echo "</key>" >> ${CURRENT}
     done
     chmod -R go= ${CLIENT_OVPN}
-    zip ${CLIENT_OVPN}/myovpns.zip ${CLIENT_OVPN}/*.ovpn
+    cd ${CLIENT_OVPN}; zip --junk myovpns.zip *.ovpn
 }
 
 mail_report() {
   MAILER=$(which mailx)
   firewall-cmd --zone=public --list-all | tee -a ${REPORT}
-  echo 'Setup report + OVPN configs. Enjoy!' | ${MAILER} -s "[${EXTERNAL_IP}] Report of openVPN, privoxy and squid installation on ${OS}-${OS_VERSION_ID} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} /etc/openvpn/client-ovpn.d/myovpns.zip -- ${MYEMAIL}
+    echo -e "\n\nYour loyal servant,\nroot@$(hostname --fqdn)" | tee -a ${REPORT}
+  echo 'Setup report + OVPN configs. Have fun!' | ${MAILER} -s "[${EXTERNAL_IP}] Report of openVPN, privoxy and squid installation on ${OS}-${OS_VERSION_ID} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} /etc/openvpn/client-ovpn.d/myovpns.zip -- ${MYEMAIL}
 }
 
 post_install_check() {
@@ -339,7 +341,7 @@ $(echo -e "+----------------------------------------+\n")
 $(echo -e "|---- PERFORMING POST-INSTALL CHECKS ----|\n")
 $(echo -e "+========================================+\n")
 $(echo -e "\n  Checking for listening ports...")
-$(ss -4tlnp "( sport = :22 or sport = :1194 or sport = :8118 or sport = :3128 or sport = :8080 )")
+$(ss -tlnp "( sport = :22 or sport = :1194 or sport = :8118 or sport = :3128 or sport = :8080 )")
 $(echo -e "\nChecking allowed services through the firewall:") $(firewall-cmd --zone=${ZOME} --list-services)
 $(echo)
 EOF
