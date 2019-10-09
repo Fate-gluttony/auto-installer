@@ -121,9 +121,6 @@ setup_debian() {
     SYSTEMD_RESOLVED="openvpn-systemd-resolved"
     DEBIAN_FRONTEND="noninteractive" apt-get update && apt-get upgrade -y
     DEBIAN_FRONTEND="noninteractive" apt-get install -y "${PACKAGES[@]}" "${SYSTEMD_RESOLVED}" mailutils
-    [[ ! -d ${CLIENT_OVPN} ]] && mkdir $CLIENT_OVPN
-    sed -i '/^script-security/ a\up /etc/openvpn/update-systemd-resolved\ndown /etc/openvpn/update-systemd-resolved' /etc/openvpn/client-ovpn.d/template.txt
-    sleep 2
 }
 
 setup_privoxy() {
@@ -205,6 +202,7 @@ EOF
 }
 
 setup_openvpn() {
+    [[ ! -d ${CLIENT_OVPN} ]] && mkdir ${CLIENT_OVPN}
     [[ ! -d /var/log/openvpn ]] && mkdir /var/log/openvpn
     EASYRSA_ZIP="$OPENVPN_DIR/easy-rsa3.zip"
     EASYRSA_DIR="$OPENVPN_DIR/easyrsa3"
@@ -291,7 +289,6 @@ push "rcvbuf 393216"
 link-mtu 1460
 EOF
 
-[[ ! -d ${CLIENT_OVPN} ]] && mkdir ${CLIENT_OVPN}
 cat << EOF > ${CLIENT_OVPN}/template.txt
 client
 dev tun
@@ -332,13 +329,21 @@ EOF
     done
     chmod -R go= ${CLIENT_OVPN}
     cd ${CLIENT_OVPN}; zip myovpns.zip *.ovpn
+
+    if ([[ "x${OS}" == "xDebian" ]]); then
+        sed -i '/^script-security/ a\up /etc/openvpn/update-systemd-resolved\ndown /etc/openvpn/update-systemd-resolved' ${CLIENT_OVPN}/template.txt
+        if ([[ "x${OS_VERSION_ID}" == "x9" ]]); then
+            sed -i '/^\[Service\]/a\RestartSec=5s\nRestart=on-failure' '/lib/systemd/system/openvpn@.service'
+            systemctl daemon-reload
+        fi
+    fi
 }
 
 mail_report() {
   MAILER=$(which mailx)
   firewall-cmd --zone=public --list-all | tee -a ${REPORT}
   cd ${CLIENT_OVPN}
-  echo "Setup report + OVPN configs. Have fun!" | ${MAILER} -s "[${TARGET_OS}] Report of openVPN, privoxy and squid installation at ${EXTERNAL_IP} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} myovpns.zip -- ${MYEMAIL}
+  echo "Setup report + OVPN configs. Have fun!" | ${MAILER} -s "[${TARGET_OS}] Report on openVPN, privoxy and squid installation on ${EXTERNAL_IP} on $(date +%d-%b-%Y)" -${1} ${REPORT} -${1} myovpns.zip -- ${MYEMAIL}
 }
 
 post_install_check() {
